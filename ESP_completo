@@ -1,0 +1,175 @@
+#define BLYNK_TEMPLATE_ID "TMPL4pOA_QOLl"
+#define BLYNK_TEMPLATE_NAME "Quickstart Template"
+
+#include <ESP8266WiFi.h>
+#include <BlynkSimpleEsp8266.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266HTTPClient.h>
+
+// ===================== CONFIGURAZIONE =====================
+const char* ssid = "HaranBanjoH";
+const char* password = "fglfd4n4";
+char auth[] = "YwA6GjPJDiNOpxSPZI83hnV34yD3HdI-"; // Auth Token Blynk
+
+// MacroDroid webhook URL (notifica)
+const char* webhook_url = "https://trigger.macrodroid.com/e069f131-c220-474c-a554-f04c090461d6/triggerWebhook";
+
+// Web server locale
+ESP8266WebServer server(80);
+
+// Pin
+const int ledPin = D0;    // LED
+const int inputPin = D1;  // ingresso sensore/pulsante (pullup)
+
+// Lampeggio LED
+unsigned long blinkInterval = 1000;
+unsigned long lastBlinkTime = 0;
+bool ledState = false;
+
+// Debounce + cooldown
+int lastReading = HIGH;               
+int stableState = HIGH;               
+unsigned long lastDebounceTime = 0;
+const unsigned long debounceDelay = 50;   // ms
+const unsigned long alarmCooldown = 10000; // ms
+unsigned long lastAlarmTime = 0;
+
+// Timer per ricontrollare il WiFi
+unsigned long lastWiFiCheck = 0;
+const unsigned long wifiCheckInterval = 10000; // ogni 10s
+bool wifiConnectionStatus = false;
+
+// ===================== BLYNK: gestore V1 =====================
+BLYNK_WRITE(V1) {
+  int value = param.asInt();
+  if (value == 1) {
+    blinkInterval = 2000;   // reset lampeggio a 2 secondi da pulsante Blynk
+    Serial.println("Reset LED da pulsante Blynk (V1)");
+  }
+}
+
+// ===================== helper =====================
+void sendMacroDroidNotification() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi non connesso: impossibile inviare MacroDroid webhook");
+    return;
+  }
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.begin(client, webhook_url);
+  int code = http.GET();
+  Serial.println("Webhook MacroDroid inviato, HTTP code: " + String(code));
+  http.end();
+}
+
+void checkWiFi() {
+  if ( (WiFi.status() != WL_CONNECTED) || (wifiConnectionStatus == false) ){
+    Serial.println("WiFi perso! Tentativo di riconnessione...");
+    WiFi.begin(ssid, password);
+
+    unsigned long startAttemptTime = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000) {
+      delay(500);
+      Serial.print(".");
+    }
+
+    if ( (WiFi.status() == WL_CONNECTED) && (wifiConnectionStatus == false) ){
+      Serial.println("\nRiconnesso al WiFi! IP: " + WiFi.localIP().toString());
+      wifiConnectionStatus = true;
+      Blynk.connect(); // forza riconnessione a Blynk
+    } else {
+      Serial.println("\nWiFi non disponibile");
+      wifiConnectionStatus = false;
+    }
+  }
+}
+
+// small web page (opzionale)
+void handleRoot() {
+  String html = "<html><body><h2>Controllo LED via WiFi</h2>";
+  html += "<p>Frequenza attuale: " + String(blinkInterval) + " ms</p>";
+  html += "<form method='GET' action='/set'>";
+  html += "Nuova frequenza (ms): <input type='number' name='freq'>";
+  html += "<input type='submit' value='Imposta'>";
+  html += "</form></body></html>";
+  server.send(200, "text/html", html);
+}
+void handleSet() {
+  if (server.hasArg("freq")) {
+    blinkInterval = server.arg("freq").toInt();
+    if (blinkInterval < 100) blinkInterval = 100;
+  }
+  server.sendHeader("Location", "/");
+  server.send(303);
+}
+
+// ===================== setup & loop =====================
+void setup() {
+  pinMode(ledPin, OUTPUT);
+  digitalWrite(ledPin, LOW);
+  pinMode(inputPin, INPUT_PULLUP);
+
+  Serial.begin(115200);
+
+  // WiFi
+  WiFi.begin(ssid, password);
+  Serial.print("Connessione a WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+    wifiConnectionStatus = false;
+  }
+  Serial.println("\nConnesso! IP: " + WiFi.localIP().toString());
+  wifiConnectionStatus = true;
+
+  // Blynk
+  Blynk.begin(auth, ssid, password);
+
+  // Webserver
+  server.on("/", handleRoot);
+  server.on("/set", handleSet);
+  server.begin();
+  Serial.println("Server avviato");
+}
+
+void loop() {
+  server.handleClient();
+  Blynk.run();
+
+  // Controllo periodico del WiFi
+  if (millis() - lastWiFiCheck > wifiCheckInterval) {
+    checkWiFi();
+    lastWiFiCheck = millis();
+  }
+
+  // Lampeggio LED
+  unsigned long now = millis();
+  if (now - lastBlinkTime >= blinkInterval) {
+    ledState = !ledState;
+    digitalWrite(ledPin, ledState);
+    lastBlinkTime = now;
+  }
+
+  // Lettura con debounce
+  int reading = digitalRead(inputPin);
+  if (reading != lastReading) {
+    lastDebounceTime = now;
+  }
+  if ((now - lastDebounceTime) > debounceDelay) {
+    if (reading != stableState) {
+      stableState = reading;
+      if (stableState == LOW) { // allarme
+        if (now - lastAlarmTime >= alarmCooldown) {
+          Serial.println("Allarme rilevato: invio notifica MacroDroid e lampeggio veloce");
+          sendMacroDroidNotification();
+          blinkInterval = 200;
+          lastAlarmTime = now;
+        } else {
+          Serial.println("Allarme ignorato per cooldown");
+        }
+      }
+    }
+  }
+  lastReading = reading;
+}
