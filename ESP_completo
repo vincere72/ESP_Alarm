@@ -1,4 +1,7 @@
-# rev.1
+// rev.2
+//    checkWifi not blocking and blink management in case of Wifi disconnect
+// rev.1 
+//    1st revision
 
 #define BLYNK_TEMPLATE_ID "TMPL4pOA_QOLl"
 #define BLYNK_TEMPLATE_NAME "Quickstart Template"
@@ -24,9 +27,10 @@ const int ledPin = D0;    // LED
 const int inputPin = D1;  // ingresso sensore/pulsante (pullup)
 
 // Lampeggio LED
-unsigned long blinkInterval = 1000;
+unsigned long blinkInterval = 1000, savedBlinkInterval;
 unsigned long lastBlinkTime = 0;
 bool ledState = false;
+#define WIFI_OFF_BLINKINTERVAL 5000
 
 // Debounce + cooldown
 int lastReading = HIGH;               
@@ -38,7 +42,7 @@ unsigned long lastAlarmTime = 0;
 
 // Timer per ricontrollare il WiFi
 unsigned long lastWiFiCheck = 0;
-const unsigned long wifiCheckInterval = 10000; // ogni 10s
+const unsigned long wifiCheckInterval = 10000; // ogni 30s
 bool wifiConnectionStatus = false;
 
 // ===================== BLYNK: gestore V1 =====================
@@ -69,20 +73,26 @@ void checkWiFi() {
   if ( (WiFi.status() != WL_CONNECTED) || (wifiConnectionStatus == false) ){
     Serial.println("WiFi perso! Tentativo di riconnessione...");
     WiFi.begin(ssid, password);
-
     unsigned long startAttemptTime = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000) {
-      delay(500);
+
+    // non bloccare più di 2-3 secondi per tentativo
+    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 3000) {
+      delay(200);
       Serial.print(".");
     }
 
     if ( (WiFi.status() == WL_CONNECTED) && (wifiConnectionStatus == false) ){
-      Serial.println("\nRiconnesso al WiFi! IP: " + WiFi.localIP().toString());
-      wifiConnectionStatus = true;
-      Blynk.connect(); // forza riconnessione a Blynk
+      if (!wifiConnectionStatus) {
+        Serial.println("\nRiconnesso al WiFi! IP: " + WiFi.localIP().toString());
+        wifiConnectionStatus = true;
+        Blynk.connect(); // forza riconnessione a Blynk
+        blinkInterval = savedBlinkInterval;
+      }
     } else {
       Serial.println("\nWiFi non disponibile");
       wifiConnectionStatus = false;
+      savedBlinkInterval = blinkInterval;
+      blinkInterval = WIFI_OFF_BLINKINTERVAL;
     }
   }
 }
@@ -97,6 +107,7 @@ void handleRoot() {
   html += "</form></body></html>";
   server.send(200, "text/html", html);
 }
+
 void handleSet() {
   if (server.hasArg("freq")) {
     blinkInterval = server.arg("freq").toInt();
