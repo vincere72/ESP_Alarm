@@ -72,6 +72,10 @@ void sendMacroDroidNotification() {
 void checkWiFi() {
   if ( (WiFi.status() != WL_CONNECTED) || (wifiConnectionStatus == false) ){
     Serial.println("WiFi perso! Tentativo di riconnessione...");
+    if (blinkInterval != WIFI_OFF_BLINKINTERVAL){
+      savedBlinkInterval = blinkInterval;
+      blinkInterval = WIFI_OFF_BLINKINTERVAL;
+    }
     WiFi.begin(ssid, password);
     unsigned long startAttemptTime = millis();
 
@@ -91,8 +95,10 @@ void checkWiFi() {
     } else {
       Serial.println("\nWiFi non disponibile");
       wifiConnectionStatus = false;
-      savedBlinkInterval = blinkInterval;
-      blinkInterval = WIFI_OFF_BLINKINTERVAL;
+      if (blinkInterval != WIFI_OFF_BLINKINTERVAL){
+        savedBlinkInterval = blinkInterval;
+        blinkInterval = WIFI_OFF_BLINKINTERVAL;
+      }
     }
   }
 }
